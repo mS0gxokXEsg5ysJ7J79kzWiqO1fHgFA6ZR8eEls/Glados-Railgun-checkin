@@ -444,6 +444,7 @@ class CheckinResult:
     points_total: str = "None"
     exchange: str = "未兑换"
     code: CheckinStatus = CheckinStatus.FAILURE  # 0: 成功, 1: 重复, -2: 失败
+    checkin_count: str = "None"
 
     def to_dict(self) -> Dict[str, Union[str, CheckinStatus]]:
         result_dict = asdict(self)
@@ -469,6 +470,40 @@ class PushService:
             return True
         except Exception as e:
             logger.error(f"{LogEmoji.ERROR} 发送推送通知失败: {e}")
+            return False
+
+
+class TelegramService:
+    """Telegram 推送服务"""
+
+    ENV_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
+    ENV_CHAT_ID = "TELEGRAM_CHAT_ID"
+
+    def __init__(self):
+        self.bot_token = os.environ.get(self.ENV_BOT_TOKEN, "")
+        self.chat_id = os.environ.get(self.ENV_CHAT_ID, "")
+
+    def send(self, title: str, content: str) -> bool:
+        """发送 Telegram 消息"""
+        if not self.bot_token or not self.chat_id:
+            logger.info(f"{LogEmoji.WARNING} Telegram 未配置，跳过推送。")
+            return False
+        text = f"*{title}*\n\n{content}"
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        try:
+            resp = requests.post(url, json={
+                "chat_id": self.chat_id,
+                "text": text,
+                "parse_mode": "Markdown",
+            }, timeout=10)
+            if resp.ok:
+                logger.info(f"{LogEmoji.SUCCESS} Telegram 推送成功。")
+                return True
+            else:
+                logger.error(f"{LogEmoji.ERROR} Telegram 推送失败: {resp.text}")
+                return False
+        except Exception as e:
+            logger.error(f"{LogEmoji.ERROR} Telegram 推送异常: {e}")
             return False
 
 
@@ -526,6 +561,9 @@ class Checker:
             checkin_result = api.checkin(cookie)
             result.status = checkin_result["status"]
             result.code = checkin_result.get("code", CheckinStatus.FAILURE)
+            import re as _re
+            _m = _re.search(r"Total:\s*(\d+)", checkin_result.get("message", ""))
+            result.checkin_count = _m.group(1) if _m else "None"
 
             # 3. 获取积分
             self._log(cookie_idx, domain, LogEmoji.POINTS, "查询总积分")
@@ -565,16 +603,25 @@ class Checker:
         send_content_lines = []
         log_content_lines = []
         for i, res in enumerate(results, 1):
-            line = f"#{i} P:{res['points']} 剩余:{res['days']} 总积分:{res['points_total']} | {res['status']} | {res['exchange']}"
-            send_content_lines.append(line)
+            block = (
+                f"【GLaDOS 自动签到结果 #{i}】\n"
+                f"域名: {res['domain']}\n"
+                f"状态: {res['status']}\n"
+                f"签到积分: +{res['points']}\n"
+                f"总积分: {res['points_total']}\n"
+                f"剩余天数: {res['days']}\n"
+                f"历史签到总次数: {res['checkin_count']}\n"
+                f"兑换: {res['exchange']}"
+            )
+            send_content_lines.append(block)
 
             if self.config.verbose:
-                log_line = line
+                log_line = block
             else:
                 log_line = f"#{i} {res['status']}"
             log_content_lines.append(log_line)
 
-        content = "\n".join(send_content_lines)
+        content = "\n\n".join(send_content_lines)
         log_content = "\n".join(log_content_lines)
         return title, content, log_content
 
@@ -612,6 +659,8 @@ def main():
     logger.info(f"{LogEmoji.START} 步骤 4: 发送推送")
     push_service = PushService(config if "config" in locals() else "")
     push_service.send(title, content)
+    tg_service = TelegramService()
+    tg_service.send(title, content)
     logger.info(f"{LogEmoji.END} 签到完成")
 
 
