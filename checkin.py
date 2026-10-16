@@ -632,6 +632,12 @@ logger = init_logger()
 
 def main():
     """主函数"""
+    import random, time
+    delay = random.randint(0, 21599)
+    h, r = divmod(delay, 3600)
+    m, s = divmod(r, 60)
+    logger.info(f"{LogEmoji.INFO} 随机延迟 {h:02d}:{m:02d}:{s:02d} 后开始签到（等待 {delay} 秒）")
+    time.sleep(delay)
     try:
         # 1. 加载配置
         logger.info(f"{LogEmoji.START} 步骤 1: 加载配置")
