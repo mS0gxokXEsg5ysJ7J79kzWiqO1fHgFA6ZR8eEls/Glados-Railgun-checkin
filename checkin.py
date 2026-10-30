@@ -98,6 +98,7 @@ class Config:
 
     ENV_PUSH_KEY = "PUSHDEER_SENDKEY"
     ENV_COOKIES = "GLADOS_COOKIES"
+    ENV_RAILGUN_COOKIES = "RAILGUN_COOKIES"
     ENV_EXCHANGE_PLAN = "GLADOS_EXCHANGE_PLAN"
     ENV_VERBOSE = "GLADOS_VERBOSE"
 
@@ -144,6 +145,13 @@ class Config:
             self.cookies_list = [cookie.strip() for cookie in raw_cookies_env.split("&") if cookie.strip()]
             if not self.cookies_list:
                 raise ValueError(f"环境变量 '{self.ENV_COOKIES}' 已设置，但未包含任何有效的 Cookie。")
+
+        raw_railgun_cookies_env: Optional[str] = os.environ.get(self.ENV_RAILGUN_COOKIES)
+        if not raw_railgun_cookies_env:
+            logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_RAILGUN_COOKIES}' 未设置。")
+            self.railgun_cookies_list = []
+        else:
+            self.railgun_cookies_list = [cookie.strip() for cookie in raw_railgun_cookies_env.split("&") if cookie.strip()]
 
         if not exchange_plan_env:
             logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_EXCHANGE_PLAN}' 未设置，将使用默认设置（不自动兑换）。")
@@ -264,7 +272,10 @@ class API:
 
         try:
             if method.upper() == "POST":
-                response = self.session.post(url, headers=session_headers, data=data, timeout=(60, 120))
+                if self.domain == "railgun.info":
+                    response = self.session.post(url, headers=session_headers, json=data, timeout=(60, 120))
+                else:
+                    response = self.session.post(url, headers=session_headers, data=data, timeout=(60, 120))
             elif method.upper() == "GET":
                 response = self.session.get(url, headers=session_headers, timeout=(60, 120))
             else:
@@ -520,32 +531,45 @@ class Checker:
         if self.config.verbose or force:
             logger.info(f"{LogEmoji.COOKIE}[{cookie_idx}] {LogEmoji.DOMAIN}[{domain}] {emoji} {message}")
 
+    def _log_result(self, cookie_idx: int, domain: str, result: "CheckinResult") -> None:
+        result_message = f"结果: {result.status}"
+        if result.code == CheckinStatus.SUCCESS:
+            if self.config.verbose:
+                result_message = f"结果: {result.status}, 获得 {result.points} 积分, 剩余 {result.days}, 总 {result.points_total}, {result.exchange}"
+            self._log(cookie_idx, domain, LogEmoji.SUCCESS, result_message, force=True)
+        else:
+            self._log(cookie_idx, domain, LogEmoji.WARNING, result_message, force=True)
+
     def checkin_all(self):
         """执行所有签到任务"""
-        cookie_count = len(self.config.cookies_list)
-        domain_count = len(self.config.DOMAINS)
-        total_tasks = cookie_count * domain_count
-        task_idx = 0
+        glados_domains = [d for d in self.config.DOMAINS if d != "railgun.info"]
+        railgun_domains = ["railgun.info"] if "railgun.info" in self.config.DOMAINS else []
 
-        logger.info(f"{LogEmoji.INFO} 共 {cookie_count} 个 Cookie, {domain_count} 个域名, 共 {total_tasks} 个任务")
+        task_idx = 0
+        total_tasks = (
+            len(self.config.cookies_list) * len(glados_domains)
+            + len(self.config.railgun_cookies_list) * len(railgun_domains)
+        )
+
+        logger.info(f"{LogEmoji.INFO} glados Cookie {len(self.config.cookies_list)} 个, railgun Cookie {len(self.config.railgun_cookies_list)} 个, 共 {total_tasks} 个任务")
 
         for cookie_idx, cookie in enumerate(self.config.cookies_list, 1):
-            logger.info(f"{LogEmoji.START} ========== 开始处理 Cookie {cookie_idx} ==========")
-
-            for domain in self.config.DOMAINS:
+            logger.info(f"{LogEmoji.START} ========== 开始处理 glados Cookie {cookie_idx} ==========")
+            for domain in glados_domains:
                 task_idx += 1
                 logger.info(f"{LogEmoji.INFO} ----- 任务 {task_idx}/{total_tasks}: {LogEmoji.COOKIE}[{cookie_idx}] on {LogEmoji.DOMAIN}[{domain}] -----")
-
                 result = self._checkin_on_domain(cookie, cookie_idx, domain)
                 self.results.append(result)
+                self._log_result(cookie_idx, domain, result)
 
-                result_message = f"结果: {result.status}"
-                if result.code == CheckinStatus.SUCCESS:
-                    if self.config.verbose:
-                        result_message = f"结果: {result.status}, 获得 {result.points} 积分, 剩余 {result.days}, 总 {result.points_total}, {result.exchange}"
-                    self._log(cookie_idx, domain, LogEmoji.SUCCESS, result_message, force=True)
-                else:
-                    self._log(cookie_idx, domain, LogEmoji.WARNING, result_message, force=True)
+        for cookie_idx, cookie in enumerate(self.config.railgun_cookies_list, 1):
+            logger.info(f"{LogEmoji.START} ========== 开始处理 railgun Cookie {cookie_idx} ==========")
+            for domain in railgun_domains:
+                task_idx += 1
+                logger.info(f"{LogEmoji.INFO} ----- 任务 {task_idx}/{total_tasks}: {LogEmoji.COOKIE}[{cookie_idx}] on {LogEmoji.DOMAIN}[{domain}] -----")
+                result = self._checkin_on_domain(cookie, cookie_idx, domain)
+                self.results.append(result)
+                self._log_result(cookie_idx, domain, result)
 
     def _checkin_on_domain(self, cookie: str, cookie_idx: int, domain: str) -> CheckinResult:
         result = CheckinResult(cookie_idx, domain)
@@ -598,13 +622,14 @@ class Checker:
         repeat_count = sum(1 for r in results if r["code"] == CheckinStatus.REPEAT)
         fail_count = sum(1 for r in results if r["code"] == CheckinStatus.FAILURE)
 
-        title = f"GLaDOS 签到, 成功{success_count}, 失败{fail_count}, 重复{repeat_count}"
+        title = f"GLaDOS/Railgun 签到, 成功{success_count}, 失败{fail_count}, 重复{repeat_count}"
 
         send_content_lines = []
         log_content_lines = []
         for i, res in enumerate(results, 1):
+            platform = "Railgun" if res['domain'] == "railgun.info" else "GLaDOS"
             block = (
-                f"【GLaDOS 自动签到结果 #{i}】\n"
+                f"【{platform} 自动签到结果 #{i}】\n"
                 f"域名: {res['domain']}\n"
                 f"状态: {res['status']}\n"
                 f"签到积分: +{res['points']}\n"
@@ -633,7 +658,7 @@ logger = init_logger()
 def main():
     """主函数"""
     import random, time
-    delay = random.randint(0, 21599)
+    delay = random.randint(0, 3600)
     h, r = divmod(delay, 3600)
     m, s = divmod(r, 60)
     logger.info(f"{LogEmoji.INFO} 随机延迟 {h:02d}:{m:02d}:{s:02d} 后开始签到（等待 {delay} 秒）")
