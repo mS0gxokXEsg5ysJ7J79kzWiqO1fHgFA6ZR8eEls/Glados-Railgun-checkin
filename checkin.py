@@ -622,7 +622,7 @@ class Checker:
         repeat_count = sum(1 for r in results if r["code"] == CheckinStatus.REPEAT)
         fail_count = sum(1 for r in results if r["code"] == CheckinStatus.FAILURE)
 
-        title = f"GLaDOS/Railgun 签到, 成功{success_count}, 失败{fail_count}, 重复{repeat_count}"
+        title = f"GLaDOS/Railgun 签到, ✅成功{success_count}, ❌失败{fail_count}, 🔄重复{repeat_count}"
 
         send_content_lines = []
         log_content_lines = []
