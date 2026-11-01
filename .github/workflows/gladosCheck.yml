@@ -43,6 +43,9 @@ jobs:
         pip install requests
         pip install pypushdeer
 
+    - name: Check glados reachability
+      run: curl -v https://glados.cloud/api/user/status || true
+
     # 执行 签到脚本
     - name: Running checkin
       run: |
