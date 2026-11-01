@@ -628,10 +628,11 @@ class Checker:
         log_content_lines = []
         for i, res in enumerate(results, 1):
             platform = "Railgun" if res['domain'] == "railgun.info" else "GLaDOS"
+            status_emoji = "✅" if res['code'] == CheckinStatus.SUCCESS else ("🔄" if res['code'] == CheckinStatus.REPEAT else "❌")
             block = (
                 f"【{platform} 自动签到结果 #{i}】\n"
                 f"域名: {res['domain']}\n"
-                f"状态: {res['status']}\n"
+                f"状态: {status_emoji} {res['status']}\n"
                 f"签到积分: +{res['points']}\n"
                 f"总积分: {res['points_total']}\n"
                 f"剩余天数: {res['days']}\n"
